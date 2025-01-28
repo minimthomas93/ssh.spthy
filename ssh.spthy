@@ -1,0 +1,89 @@
+theory ssh
+
+begin
+
+builtins: diffie-hellman, hashing,symmetric-encryption
+functions: pk/1
+functions: kdf/1
+functions: mac/2
+functions: h/1
+functions:senc/2
+functions:sdec/2
+
+//////KEY_EXCHANGE///////////
+
+
+/*Client capability proposals */
+rule Client_Algorithm_proposals:
+    let
+        encryption_algos=<'AES', 'ChaCha20'>
+        mac_algos=<'HMAC-SHA256','HMAC-SHAI'>
+        hash_functions=<'SHA-256','SHA-1'>
+        Client_Capabilities=<~C_ID,encryption_algos,mac_algos,hash_functions>
+    in
+        [Fr(~C_ID)]
+        --[ClientAlgorithmProposal(~C_ID,encryption_algos,mac_algos,hash_functions)]->
+        [
+            Out(Client_Capabilities)]
+
+rule Server_Algorithm_Selection:
+    let
+        Selected_encryption='AES'
+        Selected_mac='HMAC-SHA256'
+        Selected_hash='SHA-256'
+        Client_Capabilities=<C_ID,encryption_algos,mac_algos,hash_functions> 
+        Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
+    in
+        [Fr(~S_ID),In(Client_Capabilities)]
+        --[ ServerAlgorithmSelection(~S_ID,Selected_encryption,Selected_mac,Selected_hash)]->
+        [Out(Server_Selected_Algo),Stored_Values(~S_ID,Selected_encryption,Selected_mac,Selected_hash)]
+
+
+/*Key exchange for client*/
+
+rule key_exchange_client_1:
+    let 
+        gc='g'^~x      //client public key
+        
+    in
+    [Fr(~x)]
+    -->
+    [!Client_Secret_Key(~x),Out(gc)]
+
+rule key_exchange_server:
+    let 
+        gs='g'^~y    //server public key
+        shared_secret_server=gc^~y
+        Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
+        exchange_Hash_server=h(shared_secret_server,Server_Selected_Algo,gc,gs)
+    
+    in
+    [Fr(~y),In(gc),Stored_Values(~S_ID,Selected_encryption,Selected_mac,Selected_hash)]
+    -->
+    [Out(gs),
+    !Shared_secret(shared_secret_server)]
+
+rule key_exchange_client_2:
+    let 
+        gc=g^x      //client public key
+        shared_secret_client=gs^x
+        exchange_Hash_client=h(shared_secret_client,Server_Selected_Algo,gc,gs)
+
+    in
+    [In(gs),!Client_Secret_Key(x)]
+    -->
+    [!Shared_secret(shared_secret_client)]
+
+
+// rule session_key_derivation_client:
+//     let 
+//         session_key_client=h(Client_Secret_Key,exchange_Hash_client)
+
+
+end
+
+
+
+
+
+
