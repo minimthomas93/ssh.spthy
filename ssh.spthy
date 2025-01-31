@@ -12,7 +12,6 @@ functions:sdec/2
 
 //////KEY_EXCHANGE///////////
 
-
 /*Client capability proposals */
 rule Client_Algorithm_proposals:
     let
@@ -24,7 +23,8 @@ rule Client_Algorithm_proposals:
         [Fr(~C_ID)]
         --[ClientAlgorithmProposal(~C_ID,encryption_algos,mac_algos,hash_functions)]->
         [
-            Out(Client_Capabilities)]
+        Out(Client_Capabilities)
+        ]
 
 rule Server_Algorithm_Selection:
     let
@@ -34,9 +34,14 @@ rule Server_Algorithm_Selection:
         Client_Capabilities=<C_ID,encryption_algos,mac_algos,hash_functions> 
         Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
     in
-        [Fr(~S_ID),In(Client_Capabilities)]
+        [
+        Fr(~S_ID),
+        In(Client_Capabilities)
+        ]
         --[ ServerAlgorithmSelection(~S_ID,Selected_encryption,Selected_mac,Selected_hash)]->
-        [Out(Server_Selected_Algo),Stored_Values(~S_ID,Selected_encryption,Selected_mac,Selected_hash)]
+        [
+            Out(Server_Selected_Algo),Stored_Values(~S_ID,Selected_encryption,Selected_mac,Selected_hash)
+        ]
 
 
 /*Key exchange for client*/
@@ -54,30 +59,156 @@ rule key_exchange_server:
     let 
         gs='g'^~y    //server public key
         shared_secret_server=gc^~y
-        Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
+        Server_Selected_Algo=<S_ID,Selected_encryption,Selected_mac,Selected_hash>
         exchange_Hash_server=h(shared_secret_server,Server_Selected_Algo,gc,gs)
-    
     in
-    [Fr(~y),In(gc),Stored_Values(~S_ID,Selected_encryption,Selected_mac,Selected_hash)]
-    -->
-    [Out(gs),
-    !Shared_secret(shared_secret_server)]
+    [
+        Fr(~y),
+        In(gc),Stored_Values(S_ID,Selected_encryption,Selected_mac,Selected_hash)
+    ]
+    --[]->
+    [
+    Out(gs),
+    !Shared_secret(shared_secret_server)
+    ]
 
 rule key_exchange_client_2:
     let 
         gc=g^x      //client public key
         shared_secret_client=gs^x
         exchange_Hash_client=h(shared_secret_client,Server_Selected_Algo,gc,gs)
-
     in
-    [In(gs),!Client_Secret_Key(x)]
+    [
+        In(gs),!Client_Secret_Key(x)
+    ]
     -->
-    [!Shared_secret(shared_secret_client)]
+    [
+        !Shared_secret(shared_secret_client),
+        Store_Exchange_Hash(exchange_Hash_client)
+    ]
 
 
-// rule session_key_derivation_client:
-//     let 
-//         session_key_client=h(Client_Secret_Key,exchange_Hash_client)
+rule session_key_derivation_client:
+    let 
+    Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
+    exchange_Hash_client=h(shared_secret_client,Server_Selected_Algo,gc,gs)
+    session_key_client=kdf(shared_secret_client,exchange_Hash_client)
+in
+[
+    Store_Exchange_Hash(exchange_Hash_client),
+    !Shared_secret(shared_secret_client)
+]
+--[]->
+[
+    !Session_Key_Client(session_key_client)
+]
+
+rule session_key_derivation_Server:
+    let 
+    Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
+    exchange_Hash_server=h(shared_secret_server,Server_Selected_Algo,gc,gs)
+    session_key_Server=kdf(shared_secret_server,exchange_Hash_client)
+in
+[
+    Store_Exchange_Hash(exchange_Hash_client),
+    Stored_Values(~S_ID,Selected_encryption,Selected_mac,Selected_hash),
+    !Shared_secret(shared_secret_server)
+
+]
+--[]->
+[
+    !Session_Key_Server(session_key_Server)
+]
+
+/*Client sending server request to Server */
+rule service_request_client:
+    let
+    service_name='SSH - service name'
+in
+[ 
+
+]
+--[RequestService(service_name)]->
+[
+Out(service_name)
+]
+
+/*Server rejecting server request received from client */
+rule service_reject_server:
+    let
+    service_name='SSH - service name'
+    service_reject_msg = 'SSH_MSG_DISCONNECT'
+in
+[
+    In(service_name)
+]
+--[RejectRequest(service_name)]->
+[
+    Out(service_reject_msg)
+]
+
+/*Server accepting server request received from client */
+rule service_accept_server:
+    let
+    service_name='SSH - service name'
+    service_accept_msg = 'SSH_MSG_SERVICE_ACCEPT'
+in
+[
+    In(service_name)
+]
+--[AcceptRequest(service_name)]->
+[
+    Out(service_accept_msg)
+]
+//PENDING - When the service starts, it may have access to the session identifier generated during the key exchange.
+
+
+/*Client send data after server accepting the service request */
+rule client_send_data:
+    let
+    service_accept_msg = 'SSH_MSG_SERVICE_ACCEPT'
+in
+[
+    In(service_accept_msg) 
+]
+--[]->
+[
+   Out('data') 
+]
+
+/*Server accepts data from client */
+rule server_accept_data:
+    let
+    service_accept_msg = 'SSH_MSG_SERVICE_ACCEPT'
+in
+[
+    In('data')
+]
+--[]->
+[ ]
+
+/* Additional adversarial capabilities like, for instance, key reveals */
+
+rule Reveal_secretKey:
+let
+    shared_secret_client=gs^x
+in
+[
+!Shared_secret(shared_secret_client)
+]
+--[Reveal(shared_secret_client)]->
+[
+    Out(shared_secret_client)
+]
+
+//PENDING - Need to make both shared_secret_client and shared_secret_server to same value (eg:K)
+lemma secrecy:
+" All shared_secret_client shared_secret_server #i #j.
+ Shared_secret(shared_secret_client)
+ & Shared_secret(shared_secret_server)
+ ==> ( not (Ex #n. K(shared_secret_client) @n) 
+ & not(Ex #n. K(shared_secret_server) @n))
+ "
 
 
 end
