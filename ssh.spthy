@@ -64,6 +64,17 @@ rule generate_server_host_keys:
         [
             !Store_server_host_keys(~KS_priv,KS_pub)
         ]
+rule generate_client_host_keys:
+    let
+        KC_pub = pk(~KC_priv)
+        in
+        [
+            Fr(~KC_priv)
+        ]
+        -->
+        [
+            !Store_client_host_keys(~KC_priv,KC_pub)
+        ]
 
 /*Key exchange for client*/
 
@@ -101,7 +112,7 @@ rule key_exchange_server:
         Stored_Values_Server1(C_Cookie,S_Cookie,Selected_kex_algo,Selected_server_host_key_algo,Selected_encryption,Selected_mac,Selected_hash),
         !Store_server_host_keys(KS_priv,KS_pub)
     ]
-    --[CalculateAndSendExchangeHash(exchange_Hash_server),ComputeSharedSecret(k)]->
+    --[CalculateAndSendExchangeHash(exchange_Hash_server,s),ComputeSharedSecret(k)]->
     [
     Out(<gs,s,KS_pub>),
     !Shared_secret(k),!DH_Secret_Key($S_ID,~y),
@@ -175,7 +186,7 @@ rule encryption_integrity_key_client:
     !St_Integrity_Key(IKc)
 ]
 
-rule encryption_key_server:
+rule encryption_integrity_key_server:
     let
     EKs=h(<k,exchange_Hash_server,'D'>)
     IKs=h(<k,exchange_Hash_server,'F'>)
@@ -284,6 +295,7 @@ rule key_reexchange_server_1:
     let
     EKc=h(<k,exchange_Hash_server,'C'>)
     encrypted_data=senc('unencrypted_data',EKc)
+    init_msg='SSH_MSG_KEXINIT'
     in
     [
         In(encrypted_data),
@@ -291,17 +303,18 @@ rule key_reexchange_server_1:
         !Shared_secret(k)
 
     ]
-    --[Initiate_KeyReExchange('SSH_MSG_KEXINIT')]->
-    [Out('SSH_MSG_KEXINIT')]
+    --[Initiate_KeyReExchange(init_msg)]->
+    [Out(init_msg)]
 
 
 rule key_reexchange_client_1:
     let 
         gc_new='g'^~x      //client public key
+        init_msg='SSH_MSG_KEXINIT'
         
     in
     [   
-        In('SSH_MSG_KEXINIT'),
+        In(init_msg),
         Fr(~x)
     ]
     --[ComputeNewKeys(gc_new)]->
@@ -320,7 +333,7 @@ rule key_reexchange_server_2:
     --[]->
     [
     Out(gs_new),
-    !Shared_secret(k)
+    !Shared_secret_new(k)
     ]
 
 rule key_reexchange_client_2:
@@ -333,37 +346,67 @@ rule key_reexchange_client_2:
     ]
     -->
     [
-        !Shared_secret(k)
+        !Shared_secret_new(k)
     ]
 
-rule encryption_key_client_reexchange:
+rule encryption_integrity_key_client_reexchange:
     let
         EKc=h(<k,exchange_Hash_client,'C'>)
+        IKc=h(<k,exchange_Hash_client,'E'>)
     in
     [
-    !Shared_secret(k),
+    !Shared_secret_new(k),
     Store_as_session_identifier_client(exchange_Hash_client)
     
     ]
 -->
 [
-    !St_Encrypted_key(EKc)
+    !St_Encrypted_key_new(EKc),
+    !St_Integrity_Key_new(IKc)
 ]
 
-rule encryption_key_server_reexchange:
+rule encryption_integrity_key_server_reexchange:
     let
     EKs=h(<k,exchange_Hash_server,'D'>)
+    IKs=h(<k,exchange_Hash_server,'F'>)
     in
     [
-    !Shared_secret(k),
+    !Shared_secret_new(k),
     Store_as_session_identifier_server(exchange_Hash_server)
     
     ]
 -->
 [
-    !St_Encrypted_key(EKs)
+    !St_Encrypted_key_new(EKs),
+    !St_Integrity_Key_new(IKs)
 ]
 
+rule service_request_reexchange_client:
+    let
+    service_name='SSH - service name'   //could be ssh-userauth or ssh-connection based on context
+in
+[ 
+
+]
+--[RequestService(service_name)]->
+[
+Out(service_name)
+]
+
+// // /*Accepting service request messages during re-key exchanges. */
+rule service_accept_reexchange_server:
+    let
+    service_name='SSH - service name'
+    service_accept_msg = 'SSH_MSG_SERVICE_ACCEPT'           // Message sent by the server to accept the service
+
+in
+[
+    In(service_name)
+]
+--[AcceptRequest(service_name)]->
+[
+    Out(<service_accept_msg,'SSH_MSG_NEWKEYS'>)
+]
 
 
 // /* Additional adversarial capabilities like, for instance, key reveals */
@@ -396,6 +439,14 @@ rule reveal_encryption_key:
         Out(Ek)                                                         
     ]
 
+rule reveal_integrity_key:
+    [
+        !St_Encrypted_key(Ik)                                               
+    ]
+    --[Reveal_encrypted_key(Ik)]->
+    [
+        Out(Ik)                                                         
+    ]
 
 lemma secrecy:
 " All k #i #j.
@@ -405,19 +456,12 @@ ComputeSharedSecret(k) @#i
  & not(Ex #n. K(k) @n))
  "
 
-// lemma algorithmSelection:
-// " All S_Cookie Selected_kex_algo Selected_server_host_key_algo Selected_encryption Selected_mac Selected_hash #i.
-// ServerAlgorithmSelection(S_Cookie,Selected_kex_algo,Selected_server_host_key_algo,Selected_encryption,Selected_mac,Selected_hash) @#i
-// ==>(Ex C_Cookie kex_algorithms server_host_key_algorithms encryption_algos mac_algos hash_functions #j.
-//     SendClientAlgorithmProposal(C_Cookie,kex_algorithms,server_host_key_algorithms,encryption_algos,mac_algos,hash_functions)@#j & j<i)
-// "
-
-// lemma calculateExchangeHashServer:
-// "All exchange_Hash_server #i.
-// CalculateAndSendExchangeHash(exchange_Hash_server) @#i
-// ==> (Ex gc C_ID #j.
-//     SendDHpublicKey(gc,$C_ID) @#j & j<i)
-// "
+lemma algorithmSelection:
+" All S_Cookie Selected_kex_algo Selected_server_host_key_algo Selected_encryption Selected_mac Selected_hash #i.
+ServerAlgorithmSelection(S_Cookie,Selected_kex_algo,Selected_server_host_key_algo,Selected_encryption,Selected_mac,Selected_hash) @#i
+==>(Ex C_Cookie kex_algorithms server_host_key_algorithms encryption_algos mac_algos hash_functions #j.
+    SendClientAlgorithmProposal(C_Cookie,kex_algorithms,server_host_key_algorithms,encryption_algos,mac_algos,hash_functions)@#j & j<i)
+"
 
 lemma dataSendAgreement:
 "All encrypted_data mac_data #i.
@@ -430,7 +474,7 @@ lemma keyReExchangeAgreement:
 "All gc_new #i.
 ComputeNewKeys(gc_new) @#i
 ==> (Ex SSH_MSG_KEXINIT #j.
-    Initiate_KeyReExchange('SSH_MSG_KEXINIT') @#j &j<i)
+    Initiate_KeyReExchange(SSH_MSG_KEXINIT) @#j &j<i)
 "
 
 end
