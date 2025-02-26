@@ -2,7 +2,7 @@ theory ssh
 
 begin
 
-builtins: diffie-hellman, hashing, symmetric-encryption,signing
+builtins: diffie-hellman, hashing, symmetric-encryption, signing, natural-numbers,xor
 
 functions: pk/1
 functions: kdf/1
@@ -12,7 +12,13 @@ functions:senc/2
 functions:sdec/2
 functions:add/2
 functions:sign/2
+//functions:Z/0
+//functions:XOR/2
+//functions:zero/0
 
+
+//equations:x XOR zero = x
+//equations:x XOR x = zero
 
 //////KEY_EXCHANGE///////////
 
@@ -76,7 +82,7 @@ rule generate_client_host_keys:
             !Store_client_host_keys(~KC_priv,KC_pub)
         ]
 
-/*Key exchange for client*/
+// /*Key exchange for client*/
 
 rule key_exchange_client_1:
     let 
@@ -93,7 +99,7 @@ rule key_exchange_client_1:
     In(Server_Selected_Algo),
     Stored_Values_Client1(C_Cookie,kex_algorithms,server_host_key_algorithms,encryption_algos, mac_algos, hash_functions)
     ]
-    --[ClientAlgorithmSelection(Selected_encryption,Selected_mac,Selected_hash),SendDHpublicKey(gc,$C_ID) ]->
+    --[ClientAlgorithmSelection(Selected_encryption,Selected_mac,Selected_hash),SendDHpublicKey(gc,$C_ID),Store_secretkey_Client($C_ID,~x) ]->
     [!DH_Secret_Key($C_ID,~x),
     Stored_Values_Client2(C_Cookie,Server_Selected_Algo),
     Out(<gc,Server_Selected_Algo>)]
@@ -112,7 +118,7 @@ rule key_exchange_server:
         Stored_Values_Server1(C_Cookie,S_Cookie,Selected_kex_algo,Selected_server_host_key_algo,Selected_encryption,Selected_mac,Selected_hash),
         !Store_server_host_keys(KS_priv,KS_pub)
     ]
-    --[CalculateAndSendExchangeHash(exchange_Hash_server,s),ComputeSharedSecret(k)]->
+    --[CalculateAndSendExchangeHash(exchange_Hash_server,s),Store_secretkey_Server($S_ID,~y),ComputeSharedSecret($S_ID,k)]->
     [
     Out(<gs,s,KS_pub>),
     !Shared_secret(k),!DH_Secret_Key($S_ID,~y),
@@ -130,47 +136,47 @@ rule key_exchange_client_2:
         !DH_Secret_Key($C_ID,x),
         Stored_Values_Client2(C_Cookie,Server_Selected_Algo)
     ]
-    --[VerifyExchangeHash(s),ComputeSharedSecret(k)]->
+    --[VerifyExchangeHash(s),ComputeSharedSecret($C_ID,k)]->
     [
         Store_as_session_identifier_client(exchange_Hash_client),                  //Program will run only when we comment this value-NEED TO CHECK
         !Shared_secret(k)
     ]
 
 
-// ////need to check whether we need session_key_derivation_client & session_key_derivation_Server rules or not.
+// // ////need to check whether we need session_key_derivation_client & session_key_derivation_Server rules or not.
 
-// rule session_key_derivation_client:
-//     let 
-//     //Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
-//     //exchange_Hash_client=h(k,Server_Selected_Algo,gc,gs)
-//     session_key_client=kdf(k,exchange_Hash_client)
-// in
-// [
-//     Store_as_session_identifier_client(exchange_Hash_client),
-//     !Shared_secret(k)
-// ]
-// --[]->
-// [
-//     !Session_Key_Client(session_key_client)
-// ]
+// // rule session_key_derivation_client:
+// //     let 
+// //     //Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
+// //     //exchange_Hash_client=h(k,Server_Selected_Algo,gc,gs)
+// //     session_key_client=kdf(k,exchange_Hash_client)
+// // in
+// // [
+// //     Store_as_session_identifier_client(exchange_Hash_client),
+// //     !Shared_secret(k)
+// // ]
+// // --[]->
+// // [
+// //     !Session_Key_Client(session_key_client)
+// // ]
 
-// rule session_key_derivation_Server:
-//     let 
-//     //Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
-//     //exchange_Hash_server=h(k,Server_Selected_Algo,gc,gs)
-//     session_key_Server=kdf(k,exchange_Hash_client)
-// in
-// [
-//     Store_as_session_identifier_server(exchange_Hash_server),
-//     !Shared_secret(k)
+// // rule session_key_derivation_Server:
+// //     let 
+// //     //Server_Selected_Algo=<~S_ID,Selected_encryption,Selected_mac,Selected_hash>
+// //     //exchange_Hash_server=h(k,Server_Selected_Algo,gc,gs)
+// //     session_key_Server=kdf(k,exchange_Hash_client)
+// // in
+// // [
+// //     Store_as_session_identifier_server(exchange_Hash_server),
+// //     !Shared_secret(k)
 
-// ]
-// --[]->
-// [
-//     !Session_Key_Server(session_key_Server)
-// ]
+// // ]
+// // --[]->
+// // [
+// //     !Session_Key_Server(session_key_Server)
+// // ]
 
-// ///Encryption and Integrity key derivation -use for data encryption and integrity
+// // ///Encryption and Integrity key derivation -use for data encryption and integrity
 rule encryption_integrity_key_client:
     let
         EKc=h(<k,exchange_Hash_client,'C'>)
@@ -203,7 +209,7 @@ rule encryption_integrity_key_server:
 
 
 
-// // /*Client sending server request to Server */
+// // // /*Client sending server request to Server */
 rule service_request_client:
     let
     service_name='SSH - service name'   //could be ssh-userauth or ssh-connection based on context
@@ -216,7 +222,7 @@ in
 Out(service_name)
 ]
 
-// // /*Server rejecting server request received from client */
+// // // /*Server rejecting server request received from client */
 rule service_reject_server:
     let
     service_name='SSH - service name'           //client's requested service
@@ -230,7 +236,7 @@ in
     Out(service_reject_msg)                 //sends disconnect message to client
 ]
 
-// // /*Server accepting server request received from client */
+// // // /*Server accepting server request received from client */
 rule service_accept_server:
     let
     service_name='SSH - service name'
@@ -245,14 +251,15 @@ in
     Out(<service_accept_msg,'SSH_MSG_NEWKEYS'>)
 ]
 
-// // /*Client send data after server accepting the service request */
+// // // /*Client send data after server accepting the service request */
 rule client_send_data:
     let
     service_accept_msg = 'SSH_MSG_SERVICE_ACCEPT'
-    sequence_number = '0'                                       //Initialized to zero by assuming this as first packet
+    sequence_number = %1                                   //Initialized to zero by assuming this as first packet
     mac_data = mac(IKc,<sequence_number,'unencrypted_data'>)
     encrypted_data=senc('unencrypted_data',EKc)
-    added_value=add(sequence_number,1)
+    //added_value=add(sequence_number,1:nat)
+    added_value=(sequence_number %+ %1)
 
 in
 [
@@ -266,18 +273,17 @@ in
    !Increment_Store_sequence_number_client(added_value)      //for next packets this incremented sequence number needs to be used
 ]
 
-// /*Server accepts data from client */
+// // /*Server accepts data from client */
 rule server_accept_data:
     let
     EKc=h(<k,exchange_Hash_server,'C'>)
     IKc=h(<k,exchange_Hash_server,'E'>)
     encrypted_data=senc('unencrypted_data',EKc)
     unencrypted_data=sdec(encrypted_data,EKc)
-    sequence_number='0'
+    sequence_number=%1
     mac_data = mac(IKc,<sequence_number,unencrypted_data>)
     verified_mac=mac(IKs,<sequence_number,unencrypted_data>)
-    added_value=add(sequence_number,1)
-
+    added_value=(sequence_number %+ %1)
 in
 [
     In(<encrypted_data,mac_data>),
@@ -290,7 +296,7 @@ in
 [Increment_Store_sequence_number_server(added_value)      //for next packets this incremented sequence number needs to be used
 ]
 
-// // ////KEY-REEXCHANGE- After some time of transmitting data
+// // // ////KEY-REEXCHANGE- After some time of transmitting data
 rule key_reexchange_server_1:
     let
     EKc=h(<k,exchange_Hash_server,'C'>)
@@ -393,7 +399,7 @@ in
 Out(service_name)
 ]
 
-// // /*Accepting service request messages during re-key exchanges. */
+// // // /*Accepting service request messages during re-key exchanges. */
 rule service_accept_reexchange_server:
     let
     service_name='SSH - service name'
@@ -409,7 +415,7 @@ in
 ]
 
 
-// /* Additional adversarial capabilities like, for instance, key reveals */
+// // /* Additional adversarial capabilities like, for instance, key reveals */
 
 rule reveal_dh_key:
     [
@@ -448,12 +454,22 @@ rule reveal_integrity_key:
         Out(Ik)                                                         
     ]
 
+// lemma executability:
+// exists-trace
+// "Ex 
+
+
+// "
+
 lemma secrecy:
-" All k #i #j.
-ComputeSharedSecret(k) @#i
- & ComputeSharedSecret(k) @#j
- ==> ( not (Ex #n. K(k) @n) 
- & not(Ex #n. K(k) @n))
+" All C_ID S_ID x y k #i #j .
+Store_secretkey_Client(C_ID,x) @#i
+ & ComputeSharedSecret(C_ID,k) @#i
+ & Store_secretkey_Server(S_ID,y) @#j
+ & ComputeSharedSecret(S_ID,k) @#j
+ ==> ( not (Ex #n. K(x) @n) 
+ & not(Ex #n. K(y) @n)
+ & not (Ex #n. K(k) @n))
  "
 
 lemma algorithmSelection:
@@ -463,18 +479,18 @@ ServerAlgorithmSelection(S_Cookie,Selected_kex_algo,Selected_server_host_key_alg
     SendClientAlgorithmProposal(C_Cookie,kex_algorithms,server_host_key_algorithms,encryption_algos,mac_algos,hash_functions)@#j & j<i)
 "
 
-lemma dataSendAgreement:
-"All encrypted_data mac_data #i.
-SendData(<encrypted_data,mac_data>) @#i
-==> (Ex service_name #j.
-    AcceptRequest(service_name) @#j & j<i)"
+// lemma dataSendAgreement:
+// "All encrypted_data mac_data #i.
+// SendData(<encrypted_data,mac_data>) @#i
+// ==> (Ex service_name #j.
+//     AcceptRequest(service_name) @#j & j<i)"
 
 
 lemma keyReExchangeAgreement:
 "All gc_new #i.
 ComputeNewKeys(gc_new) @#i
 ==> (Ex SSH_MSG_KEXINIT #j.
-    Initiate_KeyReExchange(SSH_MSG_KEXINIT) @#j &j<i)
+    Initiate_KeyReExchange(SSH_MSG_KEXINIT) @#j & j<i)
 "
 
 end
